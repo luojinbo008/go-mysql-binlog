@@ -1,0 +1,28 @@
+
+#binlog position flush到磁盘的间隔
+binlog_flush_ms = 2000  #2s刷新一次
+
+
+[clusters]
+agents = ["168.136.56.101:20600"]
+
+[log]
+log_path = "log/producer.log"
+# 0 单个文件 1按天分 2按小时分
+type = 2
+highlighting = false
+level = "debug"
+
+#定义订阅的mysql主库的连接信息
+[[mysql]]
+id = "1"
+addr = "192.168.136.45:3306"
+user = "webuser"
+password = "123456"
+flavor = "mysql"  
+data_path = "./conf/master1.info"
+nsname = "netbank"
+tablename = "delivery_log"
+
+
+ 
