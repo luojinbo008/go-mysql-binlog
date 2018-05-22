@@ -9,10 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
-
 	"fmt"
-
-	//"banyan_api"
 
 	"github.com/BurntSushi/toml"
 	"github.com/ngaut/log"
@@ -33,14 +30,14 @@ type MysqlPos struct {
 	Pos  uint32 `toml:"bin_pos"`
 }
 
-//Producer 定义Producer的结构
+// Producer 定义Producer的结构
 type Producer struct {
 	*canal.DummyEventHandler
 
 	c     *Config
 	canal *canal.Canal
 
-	//idChan   chan MessageID
+	// idChan   chan MessageID
 	idChan   chan int64
 	exitChan chan struct{}
 
@@ -52,15 +49,14 @@ type Producer struct {
 
 	IsRestart  bool
 	ColumnsMap map[string][]string
-/*	cluster    *banyan_api.ClusterClient
-	client     *banyan_api.BanyanClient*/
 	sqlcfg     MysqlConfig
 	oldID      int64
 }
 
 // NewProducer 初始化
 func NewProducer(c *Config, mysqlcfg MysqlConfig) (*Producer, error) {
-	//日志目录确保存在
+
+	// 日志目录确保存在
 	dir := filepath.Dir(c.LogConfig.Path)
 	exist, _ := PathExists(dir)
 
@@ -72,7 +68,7 @@ func NewProducer(c *Config, mysqlcfg MysqlConfig) (*Producer, error) {
 		}
 	}
 
-	//配置日志
+	// 配置日志
 	log.SetHighlighting(c.LogConfig.Highlighting)
 	log.SetLevel(log.StringToLogLevel(c.LogConfig.Level))
 	log.SetFlags(log.Lshortfile | log.Ldate | log.Ltime)
@@ -89,7 +85,7 @@ func NewProducer(c *Config, mysqlcfg MysqlConfig) (*Producer, error) {
 	cfg.Addr = mysqlcfg.Addr
 	cfg.User = mysqlcfg.User
 	cfg.Password = mysqlcfg.Password
-	cfg.Dump.ExecutionPath = "" //不支持mysqldump
+	cfg.Dump.ExecutionPath = "" 		//	不支持mysqldump
 	cfg.Flavor = mysqlcfg.Flavor
 	cfg.LogLevel = c.LogConfig.Level
 
@@ -109,19 +105,10 @@ func NewProducer(c *Config, mysqlcfg MysqlConfig) (*Producer, error) {
 		}
 
 		log.Infof("ns:%s,table:%s", mysqlcfg.NsName, mysqlcfg.TableName)
-		/*clusters := make([]string, 0)
-		for _, v := range c.ClusterConfig.Agents {
-			clusters = append(clusters, v)
-		}
-		p.cluster = banyan_api.NewClusterClient(clusters)
-		p.client, err = p.cluster.GetBanyanClient(mysqlcfg.NsName, mysqlcfg.TableName, 3000, 3)
 
-		if err != nil {
-			log.Errorf("GetBanyanClient failed: %v", err)
-			return nil, err
-		}*/
 		p.sqlcfg = mysqlcfg
-		//注册RowsEventHandler
+
+		// 注册RowsEventHandler
 		p.canal.SetEventHandler(p)
 
 		pos, err := p.loadMasterInfo()
@@ -129,13 +116,13 @@ func NewProducer(c *Config, mysqlcfg MysqlConfig) (*Producer, error) {
 			log.Fatalf("load binlog position error - %s", err)
 		}
 
-		//启动canal
+		// 启动canal
 		p.canal.StartFrom(*pos)
 
-		//启动msg id分配器
+		// 启动msg id分配器
 		p.waitGroup.Wrap(func() { p.idPump() })
 
-		//定时保存binlog position
+		// 定时保存binlog position
 		p.waitGroup.Wrap(func() { p.saveMasterInfoLoop() })
 
 		log.Info("Producer start ok. id = %s", p.sqlcfg.Id)
@@ -143,21 +130,18 @@ func NewProducer(c *Config, mysqlcfg MysqlConfig) (*Producer, error) {
 	}
 }
 
-//Close 关闭Producer,释放资源
+// Close 关闭Producer,释放资源
 func (p *Producer) Close() {
 
-	//关闭canal
+	// 关闭canal
 	p.canal.Close()
 
-	//save binlog postion
-
+	// save binlog postion
 	pos := p.canal.SyncedPosition()
 	err := p.saveMasterInfo(pos.Name, pos.Pos)
 	if err != nil {
 		log.Warnf("save binlog position error when closing - %s", err)
 	}
-	//关闭topic
-	//err = p.topic.Close()
 
 	close(p.exitChan)
 
@@ -176,7 +160,7 @@ func (p *Producer) OnDDL(nextPos mysql.Position, queryEvent *replication.QueryEv
 		tempStr := make([]string, 0)
 		num := 0
 		for _, v := range query {
-			if v == 32 { //space
+			if v == 32 { // space
 				num = num + 1
 				if num == 2 {
 					num = num - 1
@@ -196,16 +180,18 @@ func (p *Producer) OnDDL(nextPos mysql.Position, queryEvent *replication.QueryEv
 		if string(queryEvent.Schema) != "" {
 			log.Infof("pos:%d schema:%s statement: %s ", nextPos.Pos, queryEvent.Schema, strQuery)
 			if strings.Contains(strQuery, "drop") {
+				select {
+					case id = <-p.idChan:
+				}
 				err := p.saveMasterInfo(nextPos.Name, nextPos.Pos)
 				if err != nil {
 					log.Warnf("save binlog position error  - %s", err)
 				}
-				defer p.Close()
-				return errors.New("drop database need to sync binlog pos")
+				p.sqlProcessing(id, strQuery, "drop")
 			}
 			if strings.Contains(strQuery, "create database") {
 				select {
-				case id = <-p.idChan:
+					case id = <-p.idChan:
 				}
 				err := p.saveMasterInfo(nextPos.Name, nextPos.Pos)
 				if err != nil {
@@ -213,7 +199,7 @@ func (p *Producer) OnDDL(nextPos mysql.Position, queryEvent *replication.QueryEv
 				}
 				p.sqlProcessing(id, strQuery, "common")
 			}
-			if strings.Contains(strQuery, "create table") { //原操作没有指定库名，必须拼接上
+			if strings.Contains(strQuery, "create table") { // 原操作没有指定库名，必须拼接上
 				/*
 					pos := -1
 					pos = strings.Index(strQuery, "create table ")
@@ -222,7 +208,7 @@ func (p *Producer) OnDDL(nextPos mysql.Position, queryEvent *replication.QueryEv
 					tempStr = tempStr + strQuery
 				*/
 				select {
-				case id = <-p.idChan:
+					case id = <-p.idChan:
 				}
 				err := p.saveMasterInfo(nextPos.Name, nextPos.Pos)
 				if err != nil {
@@ -232,7 +218,8 @@ func (p *Producer) OnDDL(nextPos mysql.Position, queryEvent *replication.QueryEv
 			}
 		} else {
 			log.Infof("pos:%d schema is null, statement: %s", nextPos.Pos, strQuery)
-			//alter table
+
+			// alter table
 			if strings.Contains(strQuery, "create table") {
 				err := p.saveMasterInfo(nextPos.Name, nextPos.Pos)
 				if err != nil {
@@ -241,7 +228,7 @@ func (p *Producer) OnDDL(nextPos mysql.Position, queryEvent *replication.QueryEv
 
 				log.Warnf("create table but dont have schema =%s", strQuery)
 				select {
-				case id = <-p.idChan:
+					case id = <-p.idChan:
 				}
 				p.sqlProcessing(id, strQuery, "common")
 				err = p.saveMasterInfo(nextPos.Name, nextPos.Pos)
@@ -249,6 +236,7 @@ func (p *Producer) OnDDL(nextPos mysql.Position, queryEvent *replication.QueryEv
 					log.Warnf("save binlog position error - %s", err)
 				}
 			}
+
 			if strings.Contains(strQuery, "alter table") {
 				select {
 				case id = <-p.idChan:
@@ -263,21 +251,21 @@ func (p *Producer) OnDDL(nextPos mysql.Position, queryEvent *replication.QueryEv
 			}
 		}
 	} else {
-		//log.Infof(" strQuery: %s", queryEvent.Query)   //BEGIN
+		// log.Infof(" strQuery: %s", queryEvent.Query)   // BEGIN
 	}
 
-	//var err error = errors.New("this is a new error")
+	// var err error = errors.New("this is a new error")
 	return nil
 }
 
 func (p *Producer) ProcessAlter(queryEvent *replication.QueryEvent) error {
-	schemaTable := "" //fmt.Sprintf("%s.%s", queryEvent.Schema, queryEvent.Table.Name)
+	schemaTable := "" // fmt.Sprintf("%s.%s", queryEvent.Schema, queryEvent.Table.Name)
 	fields := make([]string, 0)
 	query := strings.ToLower(string(queryEvent.Query))
 	tempStr := make([]string, 0)
 	num := 0
 	for _, v := range query {
-		if v == 32 { //space
+		if v == 32 { // space
 			num = num + 1
 			if num == 2 {
 				num = num - 1
@@ -303,13 +291,14 @@ func (p *Producer) ProcessAlter(queryEvent *replication.QueryEvent) error {
 	schemaTable = strQuery[0:pos]
 	log.Debugf("33 = %s ", schemaTable)
 	columns, ok := p.ColumnsMap[schemaTable]
-	//如果 ok 是 true, 则存在，否则不存在 /
 
+	// 如果 ok 是 true, 则存在，否则不存在
 	if ok {
 		fields = columns
 	} else {
-		//return errors.New("alter table but not found schema and table")
+		// return errors.New("alter table but not found schema and table")
 	}
+
 	strQuery = strQuery[pos+len(" ") : len(strQuery)]
 	for {
 		ischanged := false
@@ -361,7 +350,7 @@ func (p *Producer) ProcessAlter(queryEvent *replication.QueryEvent) error {
 	return nil
 }
 
-//onRow 实现接口RowEventHandler,处理binlog事件
+// onRow 实现接口RowEventHandler,处理binlog事件
 func (p *Producer) OnRow(e *canal.RowsEvent) error {
 	defer func() {
 		if err := recover(); err != nil {
@@ -369,6 +358,7 @@ func (p *Producer) OnRow(e *canal.RowsEvent) error {
 		}
 	}()
 	log.Debugf("Action = %s", e.Action)
+
 	/*
 		if p.c.TopicConfig.Schema != "" && e.Table.Schema != p.c.TopicConfig.Schema {
 			return nil
@@ -386,15 +376,16 @@ func (p *Producer) OnRow(e *canal.RowsEvent) error {
 			}
 		}
 	*/
+
 	select {
 	case id := <-p.idChan:
 		msg := NewMessage(id, e, &p.ColumnsMap)
 
-		//log.Infof("push message(id=%s db=%s table=%s action=%s pk=%s) to topic", msg.ID, msg.Schema, msg.Table, msg.Action, msg.Brief())
+		// log.Infof("push message(id=%s db=%s table=%s action=%s pk=%s) to topic", msg.ID, msg.Schema, msg.Table, msg.Action, msg.Brief())
 		log.Debugf("message = %s", msg.Detail())
 		var res int = 0
 		if msg.Action == "insert" {
-			res = p.insertSql(*msg) //保证msg只读
+			res = p.insertSql(*msg) // 保证msg只读
 		} else if msg.Action == "delete" {
 			res = p.deleteSql(*msg)
 		} else if msg.Action == "update" {
@@ -413,36 +404,35 @@ func (p *Producer) OnRow(e *canal.RowsEvent) error {
 
 func typeof(v interface{}) string {
 	switch t := v.(type) {
-	case uint:
-		return "num"
-	case uint8:
-		return "num"
-	case uint16:
-		return "num"
-	case uint32:
-		return "num"
-	case int:
-		return "num"
-	case int8:
-		return "num"
-	case int32:
-		return "num"
-	case int64:
-		return "num"
-	case float64:
-		return "float"
-	case float32:
-		return "float"
-	case bool:
-		return "num"
-	case nil:
-		return "null"
-
-	case string:
-		return "string"
-	default:
-		_ = t
-		return "unknown"
+		case uint:
+			return "num"
+		case uint8:
+			return "num"
+		case uint16:
+			return "num"
+		case uint32:
+			return "num"
+		case int:
+			return "num"
+		case int8:
+			return "num"
+		case int32:
+			return "num"
+		case int64:
+			return "num"
+		case float64:
+			return "float"
+		case float32:
+			return "float"
+		case bool:
+			return "num"
+		case nil:
+			return "null"
+		case string:
+			return "string"
+		default:
+			_ = t
+			return "unknown"
 	}
 }
 
@@ -450,9 +440,11 @@ func (p *Producer) updateSql(msg Message) int {
 
 	sql := ""
 	if msg.Action == "update" {
+
 		// db.Query("update binlog_test.usertb set user_name='binlogtest' where id in (2,3)")
 		// update schema.table set name='xxxx', age=2 where id in(1,2);
-		primary_keys := msg.PrimaryKeys[0][0] //初始值主键是内容需要根据内容查找主键
+
+		primary_keys := msg.PrimaryKeys[0][0] // 初始值主键是内容需要根据内容查找主键
 		pk_type := typeof(primary_keys)
 		sqlStart := fmt.Sprintf("update %s.%s set ", msg.Schema, msg.Table)
 		sqlMid1 := " where "
@@ -465,12 +457,13 @@ func (p *Producer) updateSql(msg Message) int {
 			for k, _ := range v {
 				sorted_keys = append(sorted_keys, k)
 			}
+
 			// sort 'string' key in increasing order
 			sort.Strings(sorted_keys)
 			for _, k := range sorted_keys {
 				if msg.RawRows[i][k] == primary_keys && typeof(msg.RawRows[i][k]) == pk_type {
 					primary_keys = k
-					continue //主键修不修改全部忽略
+					continue // 主键修不修改全部忽略
 				}
 				if msg.RawRows[i][k] == v[k] && typeof(v[k]) == typeof(msg.RawRows[i][k]) {
 					continue
@@ -526,7 +519,7 @@ func (p *Producer) updateSql(msg Message) int {
 		}
 
 		for i, v1 := range msg.PrimaryKeys {
-			if i%2 != 0 { //去重
+			if i%2 != 0 { // 去重
 				continue
 			}
 			for _, v2 := range v1 {
@@ -561,7 +554,7 @@ func (p *Producer) deleteSql(msg Message) int {
 	var sql string = ""
 	if msg.Action == "delete" {
 		sqlStart := fmt.Sprintf("delete from %s.%s where ", msg.Schema, msg.Table)
-		primary_keys := msg.PrimaryKeys[0][0] //初始值主键是内容需要根据内容查找主键
+		primary_keys := msg.PrimaryKeys[0][0] // 初始值主键是内容需要根据内容查找主键
 		pk_type := typeof(primary_keys)
 		sqlMid := "in "
 		sqlEnd := ");"
@@ -623,7 +616,9 @@ func (p *Producer) deleteSql(msg Message) int {
 func (p *Producer) insertSql(msg Message) int {
 
 	var sql string = ""
-	//insert into schema.table(id,name) values(1,'banli');
+
+	// insert into schema.table(id,name) values(1,'banli');
+
 	sqlStart := fmt.Sprintf("insert into %s.%s(", msg.Schema, msg.Table)
 	sqlMid := ") values"
 	sqlEnd := ";"
@@ -699,7 +694,7 @@ func (p *Producer) OnRotate(e *replication.RotateEvent) error {
 	return p.saveMasterInfo(string(e.NextLogName), uint32(e.Position))
 }
 
-//String  实现接口RowEventHandler
+// String  实现接口RowEventHandler
 func (p *Producer) String() string {
 	return "Producer"
 }
@@ -713,7 +708,7 @@ func (p *Producer) loadMasterInfo() (*mysql.Position, error) {
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	} else if os.IsNotExist(err) {
-		//文件不存在,默认从最新的位置开始
+		// 文件不存在,默认从最新的位置开始
 		return p.getNewestPos()
 	}
 
@@ -728,7 +723,7 @@ func (p *Producer) loadMasterInfo() (*mysql.Position, error) {
 	return &mysql.Position{mysqlPos.Name, mysqlPos.Pos}, nil
 }
 
-//得到最新的binlog位置
+// 得到最新的binlog位置
 func (p *Producer) getNewestPos() (*mysql.Position, error) {
 	result, err := p.canal.Execute("SHOW MASTER STATUS")
 	if err != nil {
@@ -867,26 +862,20 @@ func (p *Producer) idPump() {
 	for {
 		id++
 		select {
-		case p.idChan <- id:
-		case <-p.exitChan:
-			goto exit
+			case p.idChan <- id:
+			case <-p.exitChan:
+				goto exit
 		}
 	}
 
-exit:
-	log.Infof("ID: closing")
+	exit:
+		log.Infof("ID: closing")
 }
 func (p *Producer) sqlProcessing(id int64, quary string, schema string) error {
 	if id <= p.oldID {
 		log.Errorf("id  error qpush failed.id:%d schema:%s  sql:(%s)", id, schema, quary)
 		p.Close()
 	}
-	/*_, err := p.client.Qpush(schema, quary)
-	if err != nil {
-		log.Errorf("qpush failed: %v", err)
-		p.Close()
-		return err
-	}*/
 	log.Infof("Qpush id :%d schema:%s  sql:(%s)", id, schema, quary)
 	p.oldID = id
 	return nil

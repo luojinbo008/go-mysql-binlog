@@ -33,26 +33,27 @@ func UpperFirstLetter(str string) string {
 	}
 }
 
-//DeepCopy 复制一份数据
-//dst 是结构体的地址 src是结构体
-//example:
+// DeepCopy 复制一份数据
+// dst 是结构体的地址 src是结构体
+// example:
 // type TestStruct struct {
-// 	Name string
-// 	Age  int
+// 		Name string
+// 		Age  int
 // }
 
 // func main() {
-// 	var m2 TestStruct
-// 	m1 := &TestStruct{Name: "name", Age: 1}
+// 		var m2 TestStruct
+// 		m1 := &TestStruct{Name: "name", Age: 1}
 
-// 	err := rail.DeepCopy(&m2, *m1)
-// 	if err != nil {
-// 		fmt.Println(err)
-// 	}
-// 	m1.Name = "test"
-// 	fmt.Println(m1)
-// 	fmt.Println(m2)
+// 		err := rail.DeepCopy(&m2, *m1)
+// 		if err != nil {
+// 			fmt.Println(err)
+// 		}
+// 		m1.Name = "test"
+// 		fmt.Println(m1)
+// 		fmt.Println(m2)
 // }
+
 func DeepCopy(dst, src interface{}) error {
 	var buf bytes.Buffer
 	if err := gob.NewEncoder(&buf).Encode(src); err != nil {
